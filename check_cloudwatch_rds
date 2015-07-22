@@ -1,0 +1,149 @@
+#!/bin/bash
+
+while getopts "p:n:i:m:t:s:w:c:" opt; do
+  case "$opt" in
+    p)
+      PROFILE=$OPTARG
+      ;;
+    n)
+      NAMESPACE="AWS/$OPTARG"
+      ;;
+    m)
+      METRIC_NAME=$OPTARG
+      ;;
+    t)
+      MINUTES=$OPTARG
+      START_TIME=$(date -u +'%Y-%m-%dT%H:%M:%S' -d "-$OPTARG minutes")
+      END_TIME=$(date -u +'%Y-%m-%dT%H:%M:00')
+      PERIOD="$((60 * $OPTARG))"
+      ;;
+    s)
+      STATISTICS=$OPTARG
+      ;;
+    i)
+      INSTANCE=$OPTARG
+      if [[ $NAMESPACE =~ "RDS" ]]; then
+        DIMENSIONS="Name=DBInstanceIdentifier,Value=$OPTARG"
+      fi
+      ;;
+    w)
+      WARNING=$OPTARG.00
+      ;;
+    c)
+      CRITICAL=$OPTARG.00
+      ;;
+  esac
+done
+
+case $NAMESPACE in
+  AWS/RDS)
+    RESULT=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name $METRIC_NAME --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS)
+    UNIT=$(echo $RESULT | awk '{print $5}')
+    DESCRIPTION=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE)
+    ;;
+  *)
+    echo "Unsupported AWS Namespace"
+    ;;
+esac
+
+case $METRIC_NAME in
+  FreeableMemory|FreeStorageSpace)
+    TMP=$(echo $WARNING | cut -d'.' -f1)
+    WARNING=$TMP
+    TMP=$(echo $CRITICAL | cut -d'.' -f1)
+    CRITICAL=$TMP
+    TMP_METRIC=$(echo $RESULT | awk '{print $3}' | cut -d'.' -f1)
+    METRIC=$(($TMP_METRIC / 1000000 ))
+    if [[ 1 -eq "$(echo "${METRIC} < ${CRITICAL}" | bc)" ]]; then
+      EXIT=2
+    elif [[ 1 -eq "$(echo "${METRIC} < ${WARNING}" | bc)" ]]; then
+      EXIT=1
+    elif [[ 1 -eq "$(echo "${METRIC} > ${WARNING}" | bc)" ]]; then
+      EXIT=0
+    else
+      EXIT=3
+    fi
+    ;;
+  ReadIOPS|WriteIOPS)
+    if [[ $METRIC_NAME = "ReadIOPS" ]]; then
+      TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name WriteIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+    fi
+    if [[ $METRIC_NAME = "WriteIOPS" ]]; then
+      TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name ReadIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+    fi
+    TOTAL_IOPS=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE | jq .DBInstances[].Iops)
+    IOPS=$(printf "%0.2f" $TMP_IOPS)
+    TMP_METRIC=$(echo $RESULT | awk '{print $3}')
+    # TMP_METRIC is not rounded to 2 decimal points but METRIC is.
+    METRIC=$(printf "%0.2f" $TMP_METRIC)
+    USED_IOPS=$(echo "${METRIC} + ${IOPS}" | bc)
+    if [[ 1 -eq "$(echo "${METRIC} > ${CRITICAL}" | bc)" ]]; then
+      EXIT=2
+    elif [[ 1 -eq "$(echo "${METRIC} > ${WARNING}" | bc)" ]]; then
+      EXIT=1
+    elif [[ 1 -eq "$(echo "${METRIC} < ${WARNING}" | bc)" ]]; then
+      EXIT=0
+    else
+      EXIT=3
+    fi
+    ;;
+  *)
+    TMP_METRIC=$(echo $RESULT | awk '{print $3}')
+    # TMP_METRIC is not rounded to 2 decimal points but METRIC is.
+    METRIC=$(printf "%0.2f" $TMP_METRIC)
+    if [[ 1 -eq "$(echo "${METRIC} > ${CRITICAL}" | bc)" ]]; then
+      EXIT=2
+    elif [[ 1 -eq "$(echo "${METRIC} > ${WARNING}" | bc)" ]]; then
+      EXIT=1
+    elif [[ 1 -eq "$(echo "${METRIC} < ${WARNING}" | bc)" ]]; then
+      EXIT=0
+    else
+      EXIT=3
+    fi
+    ;;
+esac
+
+case $UNIT in
+  Bytes)
+    UNIT=' MB'
+    ;;
+  Bytes/Second)
+    UNIT=' bytes/second'
+    ;;
+  Count)
+    UNIT=' Count'
+    TMP_METRIC=$(echo $METRIC | cut -d'.' -f1)
+    METRIC=$TMP_METRIC
+    ;;
+  Count/Second)
+    UNIT=" IOPS - CombinedIOPS: $USED_IOPS/$TOTAL_IOPS"
+    ;;
+  Percent)
+    UNIT='%'
+    ;;
+  Seconds)
+    UNIT=' seconds'
+    ;;
+esac
+
+case $EXIT in
+  0)
+    echo "OK - $METRIC_NAME (${MINUTES} min $STATISTICS): $METRIC$UNIT"
+    exit $EXIT
+    ;;
+  1)
+    echo "WARNING - $METRIC_NAME (${MINUTES} min $STATISTICS): $METRIC$UNIT"
+    exit $EXIT
+    ;;
+  2)
+    echo "CRITICAL - $METRIC_NAME (${MINUTES} min $STATISTICS): $METRIC$UNIT"
+    exit $EXIT
+    ;;
+  *)
+    echo "UNKNOWN - $METRIC_NAME (${MINUTES} min $STATISTICS): $METRIC$UNIT"
+    exit 3
+    ;;
+esac
+
+exit 0
+
