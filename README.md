@@ -35,7 +35,7 @@ Setup your command check.
 
   $USER1$/check_cloudwatch_rds -p $ARG1$ -n $ARG2$ -i $ARG3$ -m $ARG4$ -s $ARG5$ -t $ARG6$ -w $ARG7$ -c $ARG8$
 
-  !production!RDS!dev-postgres-01!FreeStorageSpace!Average!15!70!90!
+  !development!RDS!dev-postgres-01!FreeStorageSpace!Average!15!70!90!
 
 ## About
 In its current status this only supports RDS, as that's all I have needs for it with Cloudwatch. I believe it has the basic structure to support other AWS Namespaces and Metrics...I just haven't expanded them to other services I don't use.
