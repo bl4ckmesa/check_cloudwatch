@@ -1,4 +1,4 @@
-# check_cloudwatch_rds
+# check_cloudwatch
 
 ## Dependencies
 
@@ -38,7 +38,7 @@ Setup your command check.
   !development!RDS!dev-postgres-01!FreeStorageSpace!Average!15!70!90!
 
 ## About
-In its current status this only supports RDS, as that's all I have needs for it with Cloudwatch. I believe it has the basic structure to support other AWS Namespaces and Metrics...I just haven't expanded them to other services I don't use.
+In its current status this only supports RDS and ElastiCache, as that's all I have needs for it with Cloudwatch. I believe it has the basic structure to support other AWS Namespaces and Metrics...I just haven't expanded them to other services I don't use.
 
 ## Why
 
