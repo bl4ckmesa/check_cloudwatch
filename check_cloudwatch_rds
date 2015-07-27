@@ -1,5 +1,7 @@
 #!/bin/bash
 
+[[ ! $REGION ]] && REGION="us-west-2"
+
 while getopts "p:n:i:m:t:s:w:c:" opt; do
   case "$opt" in
     p)
@@ -25,6 +27,9 @@ while getopts "p:n:i:m:t:s:w:c:" opt; do
       if [[ $NAMESPACE =~ "RDS" ]]; then
         DIMENSIONS="Name=DBInstanceIdentifier,Value=$OPTARG"
       fi
+      if [[ $NAMESPACE =~ "ElastiCache" ]]; then
+        DIMENSIONS="Name=CacheClusterId,Value=$OPTARG"
+      fi
       ;;
     w)
       WARNING=$OPTARG.00
@@ -41,13 +46,18 @@ case $NAMESPACE in
     UNIT=$(echo $RESULT | awk '{print $5}')
     DESCRIPTION=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE)
     ;;
+  AWS/ElastiCache)
+    RESULT=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name $METRIC_NAME --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS)
+    UNIT=$(echo $RESULT | awk '{print $5}')
+    DESCRIPTION=$(sudo aws elasticache --profile $PROFILE --region $REGION --output json describe-cache-clusters --cache-cluster-id $INSTANCE)
+    ;;
   *)
     echo "Unsupported AWS Namespace"
     ;;
 esac
 
 case $METRIC_NAME in
-  FreeableMemory|FreeStorageSpace)
+  FreeableMemory|FreeStorageSpace|BytesUsedForCache)
     TMP=$(echo $WARNING | cut -d'.' -f1)
     WARNING=$TMP
     TMP=$(echo $CRITICAL | cut -d'.' -f1)
