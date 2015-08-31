@@ -42,7 +42,11 @@ done
 
 case $NAMESPACE in
   AWS/RDS)
-    RESULT=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name $METRIC_NAME --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS)
+    if [[ $METRIC_NAME == "CombinedIOPS" ]]; then
+      RESULT=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name ReadIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS)
+    else
+      RESULT=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name $METRIC_NAME --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS)
+    fi
     UNIT=$(echo $RESULT | awk '{print $5}')
     DESCRIPTION=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE)
     ;;
@@ -74,19 +78,31 @@ case $METRIC_NAME in
       EXIT=3
     fi
     ;;
-  ReadIOPS|WriteIOPS)
-    if [[ $METRIC_NAME = "ReadIOPS" ]]; then
-      TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name WriteIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+    ReadIOPS|WriteIOPS|CombinedIOPS)
+    if [[ $METRIC_NAME = "CombinedIOPS" ]]; then
+      WriteIOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name WriteIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+      WriteIOPS=$(printf "%0.2f" $WriteIOPS)
+      ReadIOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name ReadIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+      ReadIOPS=$(printf "%0.2f" $ReadIOPS)
+      TOTAL_IOPS=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE | jq .DBInstances[].Iops)
+      IOPS=$(printf "%0.2f" $TOTAL_IOPS)
+      METRIC=$(echo "${WriteIOPS} + ${ReadIOPS}" | bc)
+      METRIC=$(printf "%0.2f" $METRIC)
+    else
+      if [[ $METRIC_NAME = "ReadIOPS" ]]; then
+        TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name WriteIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+      fi
+      if [[ $METRIC_NAME = "WriteIOPS" ]]; then
+        TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name ReadIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
+      fi
+      TOTAL_IOPS=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE | jq .DBInstances[].Iops)
+      IOPS=$(printf "%0.2f" $TMP_IOPS)
+      TMP_METRIC=$(echo $RESULT | awk '{print $3}')
+      # TMP_METRIC is not rounded to 2 decimal points but METRIC is.
+      METRIC=$(printf "%0.2f" $TMP_METRIC)
+      USED_IOPS=$(echo "${METRIC} + ${IOPS}" | bc)
     fi
-    if [[ $METRIC_NAME = "WriteIOPS" ]]; then
-      TMP_IOPS=$(sudo aws --profile $PROFILE --region $REGION cloudwatch get-metric-statistics --namespace $NAMESPACE --metric-name ReadIOPS --start-time $START_TIME --end-time $END_TIME --period $PERIOD --statistics $STATISTICS --dimensions $DIMENSIONS | awk '{print $2}')
-    fi
-    TOTAL_IOPS=$(sudo aws rds --profile $PROFILE --region $REGION --output json describe-db-instances --db-instance-identifier $INSTANCE | jq .DBInstances[].Iops)
-    IOPS=$(printf "%0.2f" $TMP_IOPS)
-    TMP_METRIC=$(echo $RESULT | awk '{print $3}')
-    # TMP_METRIC is not rounded to 2 decimal points but METRIC is.
-    METRIC=$(printf "%0.2f" $TMP_METRIC)
-    USED_IOPS=$(echo "${METRIC} + ${IOPS}" | bc)
+
     if [[ 1 -eq "$(echo "${METRIC} > ${CRITICAL}" | bc)" ]]; then
       EXIT=2
     elif [[ 1 -eq "$(echo "${METRIC} > ${WARNING}" | bc)" ]]; then
@@ -126,7 +142,11 @@ case $UNIT in
     METRIC=$TMP_METRIC
     ;;
   Count/Second)
-    UNIT=" IOPS - CombinedIOPS: $USED_IOPS/$TOTAL_IOPS"
+    if [[ $METRIC_NAME =~ "Combined" ]]; then
+      UNIT="/$TOTAL_IOPS - ReadIOPS: $ReadIOPS/$TOTAL_IOPS - WriteIOPS: $WriteIOPS/$TOTAL_IOPS"
+    else
+      UNIT="/$TOTAL_IOPS - CombinedIOPS: $USED_IOPS/$TOTAL_IOPS"
+    fi
     ;;
   Percent)
     UNIT='%'
