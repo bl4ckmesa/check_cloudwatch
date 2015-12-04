@@ -41,15 +41,21 @@ namespace() {
 	case $NAMESPACE in
 		AWS/RDS)
 			if [[ $METRIC_NAME == "CombinedIOPS" ]]; then
-				UNIT=$(echo $(aws_cloudwatch ReadIOPS) | awk '{print $5}')
+				RESULT=$(aws_cloudwatch ReadIOPS)
+				UNIT=$(echo $RESULT | awk '{print $5}')
 			else
-				UNIT=$(echo $(aws_cloudwatch) | awk '{print $5}')
+				RESULT=$(aws_cloudwatch)
+				UNIT=$(echo $RESULT | awk '{print $5}')
 			fi
 			DESCRIPTION=$(aws_rds)
 			;;
 		AWS/ElastiCache)
 			UNIT=$(echo $(aws_cloudwatch) | awk '{print $5}')
 			DESCRIPTION=$(aws_elasticache)
+			;;
+		AWS/EC2)
+			RESULT=$(aws_cloudwatch)
+			UNIT=$(echo $RESULT | awk '{print $5}')
 			;;
 		*)
 			echo "Unsupported AWS Namespace"
@@ -77,7 +83,7 @@ metrics() {
 			fi
 			;;
 			ReadIOPS|WriteIOPS|CombinedIOPS)
-			if [[ $METRIC_NAME = "CombinedIOPS" ]]; then
+			if [[ $METRIC_NAME == "CombinedIOPS" ]]; then
 				WriteIOPS=$(aws_cloudwatch WriteIOPS | awk '{print $2}')
 				WriteIOPS=$(printf "%0.2f" $WriteIOPS)
 				ReadIOPS=$(aws_cloudwatch ReadIOPS | awk '{print $2}')
@@ -88,10 +94,10 @@ metrics() {
 				METRIC=$(echo "${WriteIOPS} + ${ReadIOPS}" | bc)
 				METRIC=$(printf "%0.2f" $METRIC)
 			else
-				if [[ $METRIC_NAME = "ReadIOPS" ]]; then
+				if [[ $METRIC_NAME == "ReadIOPS" ]]; then
 					TMP_IOPS=$(aws_cloudwatch WriteIOPS | tail -n1 | awk '{print $2}')
 				fi
-				if [[ $METRIC_NAME = "WriteIOPS" ]]; then
+				if [[ $METRIC_NAME == "WriteIOPS" ]]; then
 					TMP_IOPS=$(aws_cloudwatch ReadIOPS | tail -n1 | awk '{print $2}')
 				fi
 				TOTAL_IOPS=$(aws_rds | jq .DBInstances[].Iops)
@@ -181,6 +187,9 @@ main() {
 				fi
 				if [[ $NAMESPACE =~ "ElastiCache" ]]; then
 					DIMENSIONS="Name=CacheClusterId,Value=$OPTARG"
+				fi
+				if [[ $NAMESPACE =~ "EC2" ]]; then
+					DIMENSIONS="Name=InstanceId,Value=$OPTARG"
 				fi
 				;;
 			w) WARNING=$OPTARG.00 ;;
